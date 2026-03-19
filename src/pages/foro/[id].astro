@@ -1,0 +1,638 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { db } from "../../lib/database";
+import { auth, getRankBadge } from "../../lib/auth";
+import { marked } from "marked";
+import DOMPurify from "isomorphic-dompurify";
+
+const { id } = Astro.params;
+const user = auth.getUserFromRequest(Astro);
+const userId = user?.id || null;
+const post = db.query(`
+  SELECT p.*, u.username as author, u.avatar as author_avatar, u.points as author_points, u.custom_rank as author_custom_rank,
+  (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) as like_count,
+  (SELECT 1 FROM post_likes WHERE post_id = p.id AND user_id = ?) as is_liked,
+  (SELECT 1 FROM users WHERE id = p.user_id AND pinned_post_id = p.id) as is_pinned
+  FROM posts p
+  JOIN users u ON p.user_id = u.id
+  WHERE p.id = ?
+`).get(userId, id) as any;
+
+if (!post) {
+  return Astro.redirect("/404");
+}
+
+const comments = db.query(`
+  SELECT c.*, u.username as author, u.avatar as author_avatar, u.points as author_points, u.custom_rank as author_custom_rank,
+  (SELECT COUNT(*) FROM comment_likes WHERE comment_id = c.id) as like_count,
+  (SELECT 1 FROM comment_likes WHERE comment_id = c.id AND user_id = ?) as is_liked
+  FROM comments c
+  JOIN users u ON c.user_id = u.id
+  WHERE c.post_id = ?
+  ORDER BY c.created_at ASC
+`).all(userId, id) as any[];
+
+function timeAgo(dateStr: string) {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return "hace un momento";
+  if (diff < 3600) return `hace ${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `hace ${Math.floor(diff / 3600)}h`;
+  return `hace ${Math.floor(diff / 86400)}d`;
+}
+
+function getInitial(name: string) {
+  return (name || "A").charAt(0).toUpperCase();
+}
+---
+
+<Layout title={`MoeBytes | ${post.title}`} currentPath="/foro">
+  <div class="mb-6 flex items-center justify-between">
+    <a href="/foro" class="btn-sm text-[11px] no-underline">
+      ← Volver al Foro
+    </a>
+  </div>
+
+  <div class="bg-ctp-surface0 border border-ctp-surface1 rounded-lg p-5 mb-6">
+    <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
+      <div class="sm:w-32 shrink-0 flex sm:flex-col items-center sm:items-start gap-3 border-b sm:border-b-0 sm:border-r border-ctp-surface1 pb-4 sm:pb-0 sm:pr-4">
+        <a href={`/perfiles/${post.author}`} class="w-10 h-10 sm:w-16 sm:h-16 rounded bg-ctp-mauve/20 text-ctp-mauve flex items-center justify-center font-bold text-lg sm:text-2xl overflow-hidden shadow-sm shrink-0 no-underline hover:opacity-80 transition-opacity">
+          {post.author_avatar ? (
+            <img src={`/avatars/${post.author_avatar}`} class="w-full h-full object-cover" alt={post.author} />
+          ) : (
+            <span>{getInitial(post.author)}</span>
+          )}
+        </a>
+        <div class="sm:text-center sm:w-full flex-1">
+          <div class="flex items-center sm:justify-center gap-1.5 mb-0.5">
+            <a href={`/perfiles/${post.author}`} class="text-sm font-bold text-ctp-text block break-words hover:text-ctp-mauve no-underline transition-colors">{post.author}</a>
+            <img src={getRankBadge(post.author_points, post.author_custom_rank).icon} title={getRankBadge(post.author_points, post.author_custom_rank).name} class="w-3.5 h-3.5 object-contain" alt="rank" />
+          </div>
+          <span class="text-[10px] text-ctp-overlay0 uppercase tracking-wide">
+            {post.author === 'eliiin' ? 'Creador' : getRankBadge(post.author_points, post.author_custom_rank).name}
+          </span>
+        </div>
+      </div>
+
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-3 border-b border-ctp-surface1 pb-3">
+          <h1 class="text-xl font-bold text-ctp-text m-0">{post.title}</h1>
+          <span class={`badge-${post.category} shrink-0`}>{post.category}</span>
+          <div class="ml-auto hidden sm:flex items-center gap-3">
+            <span class="text-xs text-ctp-overlay0 flex items-center gap-1">
+              {timeAgo(post.created_at)}
+              {post.updated_at && post.updated_at !== post.created_at && <span class="text-[10px] italic opacity-70">(editado)</span>}
+            </span>
+            {user && (user.id === post.user_id || user.is_admin) && (
+              <div class="flex items-center gap-2">
+                {user.id === post.user_id && (
+                  <button class="pin-post-btn text-[10px] font-bold text-ctp-mauve hover:text-ctp-pink transition-colors cursor-pointer border-none bg-transparent m-0 p-0 mr-2" data-id={post.id} title="Fijar en mi perfil">
+                    {post.is_pinned ? 'DESFIJAR' : 'FIJAR'}
+                  </button>
+                )}
+                <button class="edit-post-btn text-[10px] font-bold text-ctp-blue hover:text-ctp-sapphire transition-colors cursor-pointer border-none bg-transparent m-0 p-0" data-id={post.id} title="Editar hilo">
+                  EDITAR
+                </button>
+                <button class="delete-post-btn text-[10px] font-bold text-ctp-red hover:text-ctp-maroon transition-colors cursor-pointer border-none bg-transparent m-0 p-0" data-id={post.id} title="Eliminar hilo">
+                  BORRAR
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        <div id={`post-content-display-${post.id}`} class="text-sm text-ctp-subtext1 leading-relaxed min-h-[100px] font-sans user-content" set:html={DOMPurify.sanitize(marked.parse(post.content) as string)}></div>
+        
+        <div class="mt-4 flex items-center gap-4">
+          <button 
+            class={`like-post-btn flex items-center gap-1.5 text-xs font-bold transition-colors cursor-pointer border-none bg-transparent p-0 ${post.is_liked ? 'text-ctp-red' : 'text-ctp-overlay0 hover:text-ctp-red'}`} 
+            data-id={post.id}
+          >
+            <img 
+              src={post.is_liked ? "/likes/cutucar_prendido.png" : "/likes/cutucar_apagado.png"} 
+              alt="Like" 
+              class="like-icon w-6 h-6 object-contain" 
+            />
+            <span class="like-count">{post.like_count}</span>
+          </button>
+        </div>
+        
+        <form id={`post-edit-form-${post.id}`} class="hidden mt-2" data-id={post.id}>
+          <textarea class="textarea min-h-32 mb-2" id={`post-edit-textarea-${post.id}`} required>{post.content}</textarea>
+          <div class="flex gap-2 justify-end">
+            <button type="button" class="cancel-edit-post-btn btn-secondary text-xs px-3 py-1.5" data-id={post.id}>Cancelar</button>
+            <button type="submit" class="btn-primary text-xs px-3 py-1.5">Guardar</button>
+          </div>
+        </form>
+        <div class="sm:hidden text-[10px] text-ctp-overlay0 text-right mt-4 pt-2 border-t border-ctp-surface1">
+          {timeAgo(post.created_at)}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <h3 class="forum-table-header rounded-lg mb-0 text-ctp-subtext0">
+      Respuestas ({comments.length})
+    </h3>
+
+    <div class="flex flex-col gap-0 border border-t-0 border-ctp-surface1 bg-ctp-mantle rounded-b-lg overflow-hidden mb-6">
+      {comments.length === 0 ? (
+        <div class="px-4 py-8 text-center text-sm text-ctp-overlay0">No hay respuestas aún. ¡Sé el primero!</div>
+      ) : (
+        comments.map((comment, index) => (
+          <div id={`comment-${comment.id}`} class={`p-5 flex flex-col sm:flex-row gap-4 sm:gap-6 ${index !== comments.length - 1 ? 'border-b border-ctp-surface1' : ''}`}>
+            <div class="sm:w-32 shrink-0 flex items-center sm:items-start sm:flex-col gap-3 pb-3 sm:pb-0 sm:border-r border-ctp-surface1 border-b sm:border-b-0 sm:pr-4">
+              <a href={`/perfiles/${comment.author}`} class="w-8 h-8 sm:w-12 sm:h-12 rounded bg-ctp-surface1 text-ctp-text flex items-center justify-center font-bold text-sm sm:text-lg overflow-hidden shrink-0 no-underline hover:opacity-80 transition-opacity">
+                {comment.author_avatar ? (
+                  <img src={`/avatars/${comment.author_avatar}`} class="w-full h-full object-cover" alt={comment.author} />
+                ) : (
+                  <span>{getInitial(comment.author)}</span>
+                )}
+              </a>
+              <div class="sm:w-full sm:text-center flex-1">
+                <div class="flex items-center sm:justify-center gap-1.5 mb-0.5">
+                  <a href={`/perfiles/${comment.author}`} class="text-xs font-bold text-ctp-text block break-words hover:text-ctp-mauve no-underline transition-colors">{comment.author}</a>
+                  <img src={getRankBadge(comment.author_points, comment.author_custom_rank).icon} title={getRankBadge(comment.author_points, comment.author_custom_rank).name} class="w-3 h-3 object-contain" alt="rank" />
+                </div>
+                <span class="text-[10px] text-ctp-overlay0 uppercase tracking-wide">
+                  {comment.author === 'eliiin' ? 'Creador' : getRankBadge(comment.author_points, comment.author_custom_rank).name}
+                </span>
+                <span class="text-[10px] text-ctp-overlay0 sm:hidden ml-2">{timeAgo(comment.created_at)}</span>
+              </div>
+            </div>
+
+            <div class="flex-1 min-w-0 flex flex-col">
+              <div class="flex items-center justify-between mb-2 sm:mb-2">
+                <span class="text-[10px] text-ctp-overlay0 hidden sm:flex flex-wrap items-center gap-1 text-right w-full">
+                  {timeAgo(comment.created_at)}
+                  {comment.updated_at && comment.updated_at !== comment.created_at && <span class="text-[9px] italic opacity-70">(editado)</span>}
+                </span>
+                {user && (user.id === comment.user_id || user.is_admin) && (
+                  <div class="flex items-center gap-2 ml-auto shrink-0">
+                    <button class="edit-comment-btn text-[10px] font-bold text-ctp-blue hover:text-ctp-sapphire transition-colors cursor-pointer border-none bg-transparent m-0 p-0" data-id={comment.id} title="Editar respuesta">
+                      EDITAR
+                    </button>
+                    <button class="delete-comment-btn text-[10px] font-bold text-ctp-red hover:text-ctp-maroon transition-colors cursor-pointer border-none bg-transparent m-0 p-0" data-id={comment.id} data-post={post.id} title="Eliminar respuesta">
+                      BORRAR
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div id={`comment-content-display-${comment.id}`} class="text-sm text-ctp-subtext1 leading-relaxed flex-1 font-sans user-content break-words overflow-hidden" set:html={DOMPurify.sanitize(marked.parse(comment.content) as string)}></div>
+              
+              <div class="mt-3 flex items-center gap-4">
+                <button 
+                  class={`like-comment-btn flex items-center gap-1.5 text-xs font-bold transition-colors cursor-pointer border-none bg-transparent p-0 ${comment.is_liked ? 'text-ctp-red' : 'text-ctp-overlay0 hover:text-ctp-red'}`} 
+                  data-id={comment.id}
+                >
+                  <img 
+                    src={comment.is_liked ? "/likes/cutucar_prendido.png" : "/likes/cutucar_apagado.png"} 
+                    alt="Like" 
+                    class="like-icon w-5 h-5 object-contain" 
+                  />
+                  <span class="like-count">{comment.like_count}</span>
+                </button>
+              </div>
+              
+              <form id={`comment-edit-form-${comment.id}`} class="hidden mt-2 flex flex-col flex-1" data-id={comment.id} data-post={post.id}>
+                <textarea class="textarea min-h-24 mb-2 flex-1" id={`comment-edit-textarea-${comment.id}`} required>{comment.content}</textarea>
+                <div class="flex gap-2 justify-end mt-auto">
+                  <button type="button" class="cancel-edit-comment-btn btn-secondary text-xs px-3 py-1.5" data-id={comment.id}>Cancelar</button>
+                  <button type="submit" class="btn-primary text-xs px-3 py-1.5">Guardar</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+
+    <div class="bg-ctp-surface0 rounded-lg p-5 border border-ctp-surface1 mb-8">
+      {user ? (
+        <form id="comment-form" data-post={id}>
+          <div id="comment-error" class="hidden text-sm text-ctp-red mb-3"></div>
+          <p class="text-sm font-bold text-ctp-text mb-3 m-0 flex items-center gap-2">
+            <span class="w-6 h-6 rounded bg-ctp-mauve/20 text-ctp-mauve flex items-center justify-center text-xs overflow-hidden inline-flex">
+              {user.avatar ? (
+                <img src={`/avatars/${user.avatar}`} class="w-full h-full object-cover" />
+              ) : (
+                getInitial(user.username)
+              )}
+            </span>
+            Responder como {user.username}
+          </p>
+          <div class="relative mb-3">
+            <textarea id="comment-content" placeholder="Escribe tu respuesta..." class="textarea min-h-24 pb-10" maxlength="1000"></textarea>
+            
+            <div class="absolute bottom-2 left-2 flex items-center gap-2">
+              <input type="file" id="comment-media" accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm" class="hidden" />
+              <button type="button" id="btn-attach-comment-media" class="btn-secondary text-[10px] px-2 py-1 flex items-center gap-1" title="Adjuntar imagen o video (Máx 15MB IMG / 25MB VID)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                Adjuntar
+              </button>
+              <span id="comment-upload-status" class="text-[10px] text-ctp-overlay0 hidden">Subiendo...</span>
+            </div>
+          </div>
+          
+          <div class="flex flex-wrap items-end gap-3">
+            <div id="comment-media-preview-container" class="flex flex-wrap gap-2 hidden"></div>
+            <input type="hidden" id="comment-hidden-media" value="" />
+            
+            <button type="submit" class="btn-primary text-xs px-5 py-2">
+              Publicar Respuesta
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div class="text-center py-4">
+          <p class="text-sm text-ctp-subtext0 m-0 mb-3">Debes iniciar sesión para responder a este hilo.</p>
+          <a href="/login" class="btn-secondary text-xs inline-flex no-underline">
+            Iniciar sesión
+          </a>
+        </div>
+      )}
+    </div>
+  </div>
+
+<script>
+    import { playSound } from "../../lib/sounds";
+
+    function setupForumThread() {
+      const isThreadPage = window.location.pathname.startsWith('/foro/') && 
+                           window.location.pathname !== '/foro' && 
+                           window.location.pathname !== '/foro/';
+
+      if (isThreadPage) {
+        playSound("THREAD_ENTER");
+
+        const handleExit = () => {
+          playSound("THREAD_EXIT");
+        };
+
+        window.addEventListener('beforeunload', handleExit, { once: true });
+        
+        document.addEventListener("astro:before-preparation", () => {
+          handleExit();
+          window.removeEventListener('beforeunload', handleExit);
+        }, { once: true });
+      }
+
+      const form = document.getElementById("comment-form") as HTMLFormElement;
+      if (form) {
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const postId = form.dataset.post;
+          
+          const textContent = (document.getElementById("comment-content") as HTMLTextAreaElement).value.trim();
+          const hiddenMedia = (document.getElementById("comment-hidden-media") as HTMLInputElement).value;
+          const content = (textContent + "\n\n" + hiddenMedia).trim();
+          
+          const errorDiv = document.getElementById("comment-error");
+          const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+          
+          if (errorDiv) errorDiv.classList.add("hidden");
+          if (submitBtn) submitBtn.disabled = true;
+
+          try {
+            const res = await fetch(`/api/posts/${postId}/comments`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content }),
+            });
+
+            if (!res.ok) {
+              if (res.status === 401) throw new Error("Debes iniciar sesión");
+              throw new Error("Error al publicar comentario");
+            }
+
+            window.location.reload();
+          } catch (err: any) {
+            if (errorDiv) {
+              errorDiv.textContent = err.message;
+              errorDiv.classList.remove("hidden");
+            }
+            if (submitBtn instanceof HTMLButtonElement) submitBtn.disabled = false;
+          }
+        });
+
+        // ======= LOGICA DE SUBIDA DE MULTIMEDIA (si toco esto me muero) =======
+        const mediaInput = document.getElementById("comment-media") as HTMLInputElement;
+        const attachBtn = document.getElementById("btn-attach-comment-media");
+        const uploadStatus = document.getElementById("comment-upload-status");
+        const previewContainer = document.getElementById("comment-media-preview-container");
+        const hiddenMediaInput = document.getElementById("comment-hidden-media") as HTMLInputElement;
+
+        if (attachBtn && mediaInput) {
+          attachBtn.addEventListener("click", () => mediaInput.click());
+          mediaInput.addEventListener("change", async function () {
+            const file = this.files?.[0];
+            if (!file) return;
+
+            this.value = ""; 
+            if (uploadStatus) uploadStatus.classList.remove("hidden");
+            const errorDiv = document.getElementById("comment-error");
+            if (errorDiv) errorDiv.classList.add("hidden");
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            try {
+              const res = await fetch("/api/upload", {
+                method: "POST",
+                body: formData
+              });
+
+              if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || "Error al subir archivo");
+              }
+
+              const data = await res.json();
+              const markdown = data.type === "image" 
+                ? `\n![imagen](${data.url})\n` 
+                : `\n<video src="${data.url}" controls></video>\n`;
+                
+              hiddenMediaInput.value += markdown;
+
+              if (previewContainer) {
+                previewContainer.classList.remove("hidden");
+                const previewItem = document.createElement("div");
+                previewItem.className = "relative w-20 h-20 rounded border border-ctp-surface1 overflow-hidden group";
+
+                if (data.type === "image") {
+                  const img = document.createElement("img");
+                  img.src = data.url;
+                  img.className = "w-full h-full object-cover";
+                  previewItem.appendChild(img);
+                } else {
+                  const vid = document.createElement("video");
+                  vid.src = data.url;
+                  vid.className = "w-full h-full object-cover";
+                  previewItem.appendChild(vid);
+                  const playIcon = document.createElement("div");
+                  playIcon.className = "absolute inset-0 flex items-center justify-center bg-black/30 text-white";
+                  playIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>`;
+                  previewItem.appendChild(playIcon);
+                }
+                
+                const deleteBtn = document.createElement("button");
+                deleteBtn.type = "button";
+                deleteBtn.className = "absolute top-1 right-1 w-5 h-5 rounded-full bg-ctp-crust text-ctp-red flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-ctp-surface1 cursor-pointer";
+                deleteBtn.innerHTML = `&times;`;
+                deleteBtn.onclick = () => {
+                  previewItem.remove();
+                  hiddenMediaInput.value = hiddenMediaInput.value.replace(markdown, "");
+                  if (previewContainer.children.length === 0) {
+                    previewContainer.classList.add("hidden");
+                  }
+                };
+                
+                previewItem.appendChild(deleteBtn);
+                previewContainer.appendChild(previewItem);
+              }
+
+            } catch (err: any) {
+              if (errorDiv) {
+                errorDiv.textContent = err.message;
+                errorDiv.classList.remove("hidden");
+              }
+            } finally {
+              if (uploadStatus) uploadStatus.classList.add("hidden");
+            }
+          });
+        }
+      }
+
+      // ======= logica del delete, aquí mínimo es para pegarse un tiro =======
+      document.querySelectorAll(".delete-post-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("¿Seguro que quieres eliminar este hilo completo? No se puede deshacer.")) return;
+          const id = (btn as HTMLElement).dataset.id;
+        
+          try {
+            const res = await fetch(`/api/posts/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Error al eliminar hilo");
+            window.location.href = "/foro";
+          } catch (err: any) {
+            alert(err.message);
+          }
+        });
+      });
+
+      document.querySelectorAll(".delete-comment-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          if (!confirm("¿Seguro que quieres eliminar este comentario?")) return;
+          const id = (btn as HTMLElement).dataset.id;
+          const postId = (btn as HTMLElement).dataset.post;
+
+          try {
+            const res = await fetch(`/api/posts/${postId}/comments/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Error al eliminar comentario");
+            window.location.reload();
+          } catch (err: any) {
+            alert(err.message);
+          }
+        });
+      });
+
+      // ======= LA LÓGICA DE LA EDICIÓN, tecnicamente funciona aunque se puede mejorar creo... =======
+      document.querySelectorAll(".edit-post-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = (btn as HTMLElement).dataset.id;
+          const contentDisplay = document.getElementById(`post-content-display-${id}`);
+          const editForm = document.getElementById(`post-edit-form-${id}`);
+          if (contentDisplay && editForm) {
+            contentDisplay.classList.add("hidden");
+            editForm.classList.remove("hidden");
+          }
+        });
+      });
+
+      document.querySelectorAll(".cancel-edit-post-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = (btn as HTMLElement).dataset.id;
+          const contentDisplay = document.getElementById(`post-content-display-${id}`);
+          const editForm = document.getElementById(`post-edit-form-${id}`);
+          if (contentDisplay && editForm) {
+            editForm.classList.add("hidden");
+            contentDisplay.classList.remove("hidden");
+          }
+        });
+      });
+
+      document.querySelectorAll("form[id^='post-edit-form-']").forEach(form => {
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const formEl = form as HTMLFormElement;
+          const id = formEl.dataset.id;
+          const textarea = document.getElementById(`post-edit-textarea-${id}`) as HTMLTextAreaElement;
+          if (!textarea) return;
+          const content = textarea.value;
+          const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+      
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/posts/${id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content })
+            });
+  
+            if (!res.ok) throw new Error("Error al editar");
+            window.location.reload();
+          } catch (err: any) {
+            alert(err.message);
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        });
+      });
+
+      document.querySelectorAll(".edit-comment-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = (btn as HTMLElement).dataset.id;
+          const contentDisplay = document.getElementById(`comment-content-display-${id}`);
+          const editForm = document.getElementById(`comment-edit-form-${id}`);
+          if (contentDisplay && editForm) {
+            contentDisplay.classList.add("hidden");
+            editForm.classList.remove("hidden");
+          }
+        });
+      });
+
+      document.querySelectorAll(".cancel-edit-comment-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = (btn as HTMLElement).dataset.id;
+          const contentDisplay = document.getElementById(`comment-content-display-${id}`);
+          const editForm = document.getElementById(`comment-edit-form-${id}`);
+          if (contentDisplay && editForm) {
+            editForm.classList.add("hidden");
+            contentDisplay.classList.remove("hidden");
+          }
+        });
+      });
+
+      document.querySelectorAll("form[id^='comment-edit-form-']").forEach(form => {
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const formEl = form as HTMLFormElement;
+          const id = formEl.dataset.id;
+          const postId = formEl.dataset.post;
+          const textarea = document.getElementById(`comment-edit-textarea-${id}`) as HTMLTextAreaElement;
+          if (!textarea) return;
+          const content = textarea.value;
+          
+          const submitBtn = form.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+          if (submitBtn) submitBtn.disabled = true;
+          try {
+            const res = await fetch(`/api/posts/${postId}/comments/${id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content })
+            });
+            if (!res.ok) throw new Error("Error al editar");
+            window.location.reload();
+          } catch (err: any) {
+            alert(err.message);
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        });
+      });
+
+      // ======= Logica de los likes =======
+      document.querySelectorAll(".like-post-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = (btn as HTMLElement).dataset.id;
+          try {
+            const res = await fetch(`/api/posts/${id}/like`, { method: "POST" });
+            if (!res.ok) {
+              if (res.status === 401) throw new Error("Debes iniciar sesión para dar like");
+              throw new Error("Error al procesar like");
+            }
+            const data = await res.json();
+            
+            const countSpan = btn.querySelector(".like-count");
+            if (!countSpan) return;
+            const currentCount = parseInt(countSpan.textContent || "0");
+            countSpan.textContent = (data.liked ? currentCount + 1 : currentCount - 1).toString();
+            
+            const img = btn.querySelector("img");
+            if (data.liked) {
+              btn.classList.add("text-ctp-red");
+              btn.classList.remove("text-ctp-overlay0");
+              if (img) img.src = "/likes/cutucar_prendido.png";
+              playSound("LIKE");
+            } else {
+              btn.classList.remove("text-ctp-red");
+              btn.classList.add("text-ctp-overlay0");
+              if (img) img.src = "/likes/cutucar_apagado.png";
+              playSound("UNLIKE");
+            }
+          } catch (err: any) {
+            alert(err.message);
+          }
+        });
+      });
+
+      document.querySelectorAll(".like-comment-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const id = (btn as HTMLElement).dataset.id;
+          try {
+            const res = await fetch(`/api/comments/${id}/like`, { method: "POST" });
+            if (!res.ok) {
+              if (res.status === 401) throw new Error("Debes iniciar sesión para cutucar");
+              throw new Error("Error al procesar el cutuqueo");
+            }
+            const data = await res.json();
+            
+            const countSpan = btn.querySelector(".like-count");
+            if (!countSpan) return;
+            const currentCount = parseInt(countSpan.textContent || "0");
+            countSpan.textContent = (data.liked ? currentCount + 1 : currentCount - 1).toString();
+            
+            const img = btn.querySelector("img");
+            if (data.liked) {
+              btn.classList.add("text-ctp-red");
+              btn.classList.remove("text-ctp-overlay0");
+              if (img) img.src = "/likes/cutucar_prendido.png"; 
+              playSound("LIKE");
+            } else {
+              btn.classList.remove("text-ctp-red");
+              btn.classList.add("text-ctp-overlay0");
+              if (img) img.src = "/likes/cutucar_apagado.png"; 
+              playSound("UNLIKE");
+            }
+          } catch (err: any) {
+            alert(err.message);
+          }
+        });
+      });
+
+      const pinBtn = document.querySelector(".pin-post-btn") as HTMLButtonElement | null;
+      if (pinBtn) {
+        pinBtn.onclick = async () => {
+          const postId = pinBtn.dataset.id;
+          pinBtn.disabled = true;
+
+          try {
+            const res = await fetch(`/api/posts/${postId}/pin`, {
+              method: "POST",
+            });
+            const data = await res.json();
+
+            if (data.success) {
+              pinBtn.textContent = data.pinned ? "DESFIJAR" : "FIJAR";
+              pinBtn.title = data.pinned ? "Quitar de mi perfil" : "Fijar en mi perfil";
+            }
+          } catch (err: any) {
+            console.error(err);
+            alert("Error al fijar el hilo");
+          } finally {
+            pinBtn.disabled = false;
+          }
+        };
+      }
+    }
+
+    document.addEventListener("astro:page-load", setupForumThread);
+  </script>
+</Layout>

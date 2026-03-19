@@ -1,0 +1,92 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { auth } from "../lib/auth";
+
+// si ya estas logueado te redirige al foro, no tiene sentido estar en el login
+if (auth.getUserFromRequest(Astro)) {
+  return Astro.redirect("/foro");
+}
+---
+
+<Layout title="MoeBytes | Iniciar Sesión" currentPath="/login">
+  <div class="max-w-md mx-auto mt-12">
+    <div
+      class="bg-ctp-surface0 border border-ctp-surface1 rounded-lg p-8 shadow-sm"
+    >
+      <h1 class="text-xl font-bold text-ctp-text text-center mb-6">
+        Iniciar Sesión
+      </h1>
+
+      <form id="login-form" class="flex flex-col gap-4">
+        <div
+          id="error-alert"
+          class="hidden bg-ctp-red/15 text-ctp-red text-sm px-4 py-3 rounded-lg border border-ctp-red/30 mb-2"
+        >
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-ctp-subtext0 mb-1.5"
+            >Usuario</label
+          >
+          <input type="text" id="username" class="input py-2" required />
+        </div>
+
+        <div class="mb-2">
+          <label class="block text-sm font-medium text-ctp-subtext0 mb-1.5"
+            >Contraseña</label
+          >
+          <input type="password" id="password" class="input py-2" required />
+        </div>
+
+        <button type="submit" class="btn-primary justify-center w-full"
+          >Entrar</button
+        >
+      </form>
+
+      <div
+        class="mt-6 text-center text-sm text-ctp-subtext0 border-t border-ctp-surface1 pt-4"
+      >
+        ¿No tienes cuenta? <a
+          href="/register"
+          class="text-ctp-mauve hover:text-ctp-pink transition-colors"
+          >Regístrate aquí</a
+        >
+      </div>
+    </div>
+  </div>
+
+  <script is:inline>
+    (() => {
+      const form = document.getElementById("login-form");
+      const errorAlert = document.getElementById("error-alert");
+
+      if (!form) return;
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errorAlert.classList.add("hidden");
+
+        const username = document.getElementById("username").value;
+        const password = document.getElementById("password").value;
+
+        try {
+          const res = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          });
+
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Error al iniciar sesión");
+          }
+
+          window.location.href = "/foro";
+        } catch (err) {
+          errorAlert.textContent = err.message;
+          errorAlert.classList.remove("hidden");
+        }
+      });
+    })();
+  </script>
+</Layout>

@@ -1,0 +1,181 @@
+---
+import Layout from "../layouts/Layout.astro";
+import { auth } from "../lib/auth";
+import { db } from "../lib/database";
+
+const user = auth.getUserFromRequest(Astro);
+if (!user) {
+  return Astro.redirect("/login");
+}
+
+const notifications = db.query(`
+  SELECT n.*, u.username as actor_name, u.avatar as actor_avatar
+  FROM notifications n
+  JOIN users u ON n.actor_id = u.id
+  WHERE n.user_id = ?
+  ORDER BY n.created_at DESC
+  LIMIT 100
+`).all(user.id) as any[];
+
+function timeAgo(dateStr: string) {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diff < 60) return "hace un momento";
+  if (diff < 3600) return `hace ${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `hace ${Math.floor(diff / 3600)}h`;
+  return `hace ${Math.floor(diff / 86400)}d`;
+}
+---
+
+<Layout title="MoeBytes | Notificaciones" currentPath="/notificaciones">
+  <div class="max-w-2xl mx-auto">
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-2xl font-bold text-ctp-text m-0">Notificaciones</h1>
+      <div class="flex gap-2">
+        <button id="mark-all-read-page" class="btn-secondary text-xs px-3 py-1.5">
+          Marcar todas como leídas
+        </button>
+        <button id="delete-all-page" class="btn-secondary text-xs px-3 py-1.5 text-ctp-red border-ctp-red/30 hover:bg-ctp-red/10">
+          Borrar todas
+        </button>
+      </div>
+    </div>
+
+    <div class="space-y-3" id="notifications-page-list">
+      {notifications.length === 0 ? (
+        <div class="p-12 text-center text-sm text-ctp-overlay0 border border-ctp-surface1 rounded-lg bg-ctp-base">
+          No tienes notificaciones todavía.
+        </div>
+      ) : (
+        notifications.map((n) => {
+          let text = "";
+          let icon = "";
+          let link = n.post_id ? `/foro/${n.post_id}` : "/foro";
+          if (n.post_id && (n.type === 'like_comment' || n.type === 'comment')) {
+            link += `#comment-${n.target_id}`;
+          }
+
+          switch (n.type) {
+            case "like_post":
+              text = "cutucó tu hilo";
+              icon = "❤️";
+              break;
+            case "like_comment":
+              text = "cutucó tu comentario";
+              icon = "❤️";
+              break;
+            case "comment":
+              text = "comentó en tu hilo";
+              icon = "💬";
+              break;
+            case "follow":
+              text = "comenzó a seguirte";
+              icon = "✨";
+              link = `/perfiles/${n.actor_name}`;
+              break;
+          }
+
+          return (
+            <div class="relative group/noti-page">
+              <a
+                href={link}
+                class={`flex items-center gap-4 p-4 rounded-lg border transition-all no-underline group ${
+                  !n.is_read
+                    ? "bg-ctp-mauve/5 border-ctp-mauve/30 hover:border-ctp-mauve shadow-sm"
+                    : "bg-ctp-surface0/30 border-ctp-surface1 hover:border-ctp-surface2"
+                }`}
+              >
+                <div class="relative shrink-0">
+                  <img
+                    src={n.actor_avatar ? `/avatars/${n.actor_avatar}` : "/favicon.svg"}
+                    class="w-12 h-12 rounded-full border border-ctp-surface1 object-cover"
+                    alt={n.actor_name}
+                  />
+                  <div class="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-ctp-base border-2 border-ctp-surface0 flex items-center justify-center text-xs shadow-sm">
+                    {icon}
+                  </div>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-[15px] text-ctp-text leading-tight mb-1">
+                    <span class="font-bold group-hover:text-ctp-mauve transition-colors">
+                      {n.actor_name}
+                    </span>{" "}
+                    {text}
+                  </p>
+                  <p class="text-xs text-ctp-overlay0">{timeAgo(n.created_at)}</p>
+                </div>
+                {!n.is_read && (
+                  <div class="w-2.5 h-2.5 rounded-full bg-ctp-mauve shadow-[0_0_8px_var(--ctp-mauve)]" />
+                )}
+              </a>
+              <button 
+                class="delete-noti-btn-page absolute top-4 right-4 p-1 rounded hover:bg-ctp-red/10 text-ctp-overlay0 hover:text-ctp-red opacity-0 group-hover/noti-page:opacity-100 transition-opacity"
+                data-id={n.id}
+                title="Borrar"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+              </button>
+            </div>
+          );
+        })
+      )}
+    </div>
+  </div>
+</Layout>
+
+<script is:inline>
+  const markAllBtn = document.getElementById("mark-all-read-page");
+  if (markAllBtn) {
+    markAllBtn.addEventListener("click", async () => {
+      try {
+        const res = await fetch("/api/notifications", {
+          method: "PATCH",
+          body: JSON.stringify({}),
+        });
+        if (res.ok) {
+          window.location.reload();
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  const deleteAllBtn = document.getElementById("delete-all-page");
+  if (deleteAllBtn) {
+    deleteAllBtn.addEventListener("click", async () => {
+      if (!confirm("¿Seguro que quieres borrar todas las notificaciones?")) return;
+      try {
+        const res = await fetch("/api/notifications", {
+          method: "DELETE",
+          body: JSON.stringify({}),
+        });
+        if (res.ok) {
+          window.location.reload();
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  }
+
+  document.querySelectorAll(".delete-noti-btn-page").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      try {
+        const res = await fetch("/api/notifications", {
+          method: "DELETE",
+          body: JSON.stringify({ id }),
+        });
+        if (res.ok) {
+          btn.closest(".relative").remove();
+          const list = document.getElementById("notifications-page-list");
+          if (list && list.children.length === 0) {
+            window.location.reload();
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    });
+  });
+</script>

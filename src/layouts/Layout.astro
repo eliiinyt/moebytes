@@ -1,0 +1,167 @@
+---
+import "virtual:uno.css";
+import Navbar from "../components/Navbar.astro";
+import { ClientRouter } from "astro:transitions";
+
+interface Props {
+  title?: string;
+  description?: string;
+  currentPath?: string;
+}
+
+const {
+  title = "MoeBytes | Comunidad",
+  description = "MoeBytes — Comunidad y foro de proyectos, gaming y tecnología.",
+  currentPath = "/",
+} = Astro.props;
+---
+
+<html lang="es">
+  <head>
+    <!-- esto evita el flash de color cuando cambias de pagina -->
+    <script is:inline>
+      const applyTheme = () => {
+        const saved = localStorage.getItem("theme");
+        if (saved === "light") {
+          document.documentElement.classList.remove("dark");
+        } else {
+          document.documentElement.classList.add("dark");
+        }
+      };
+
+      applyTheme();
+
+      document.addEventListener("astro:after-swap", applyTheme);
+    </script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <title>{title}</title>
+    <ClientRouter />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body
+    class="bg-ctp-base text-ctp-text font-sans min-h-screen transition-colors duration-300"
+  >
+    <Navbar currentPath={currentPath} />
+
+    <main class="max-w-5xl mx-auto px-6 py-8">
+      <slot />
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-ctp-surface0 mt-16">
+      <div
+        class="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-4"
+      >
+        <p class="text-sm text-ctp-overlay0">© 2026 MoeBytes</p>
+        <div class="flex items-center gap-4">
+          <a
+            href="https://wa.me/+584244949156"
+            class="text-sm text-ctp-subtext0 hover:text-ctp-mauve transition-colors duration-200 no-underline"
+          >
+            💬 WhatsApp Bot
+          </a>
+          <span class="text-ctp-surface1">·</span>
+          <a
+            href="https://github.com/eliiinyt"
+            class="text-sm text-ctp-subtext0 hover:text-ctp-mauve transition-colors duration-200 no-underline"
+          >
+            GitHub
+          </a>
+        </div>
+      </div>
+    </footer>
+    <style is:global>
+      /* estilos del contenido markdown */
+      .user-content {
+        word-break: break-word;
+      }
+      .user-content p {
+        margin-bottom: 1em;
+      }
+      .user-content p:last-child {
+        margin-bottom: 0;
+      }
+      .user-content h1,
+      .user-content h2,
+      .user-content h3,
+      .user-content h4 {
+        color: var(--ctp-text);
+        font-weight: 700;
+        margin-top: 1.5em;
+        margin-bottom: 0.5em;
+      }
+      .user-content h1 {
+        font-size: 1.5em;
+      }
+      .user-content h2 {
+        font-size: 1.3em;
+      }
+      .user-content h3 {
+        font-size: 1.1em;
+      }
+      .user-content blockquote {
+        border-left: 4px solid var(--ctp-mauve);
+        padding-left: 1em;
+        color: var(--ctp-subtext0);
+        margin: 1em 0;
+        background: var(--ctp-surface0);
+        padding: 0.5em 1em;
+        border-radius: 4px;
+      }
+      .user-content ul,
+      .user-content ol {
+        margin: 1em 0;
+        padding-left: 2em;
+      }
+      .user-content ul {
+        list-style-type: disc;
+      }
+      .user-content ol {
+        list-style-type: decimal;
+      }
+      .user-content li {
+        margin-bottom: 0.25em;
+      }
+      .user-content a {
+        color: var(--ctp-blue);
+        text-decoration: none;
+      }
+      .user-content a:hover {
+        text-decoration: underline;
+      }
+      .user-content img,
+      .user-content video {
+        max-width: 100%;
+        max-height: 450px;
+        border-radius: 8px;
+        margin: 1em 0;
+        object-fit: contain;
+      }
+      .user-content code {
+        background: var(--ctp-surface1);
+        padding: 0.2em 0.4em;
+        border-radius: 4px;
+        font-family: monospace;
+      }
+      .user-content pre {
+        background: var(--ctp-crust);
+        padding: 1em;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 1em 0;
+      }
+      .user-content pre code {
+        background: transparent;
+        padding: 0;
+      }
+    </style>
+  </body>
+</html>
